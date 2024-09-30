@@ -1,14 +1,9 @@
-import {
-  ensureFourByteString,
-  arrayBufferToBase64,
-  calculateBase64SHA256,
-  calculateSHA256,
-} from "./utils";
+/* eslint-disable no-case-declarations */
+// import {handleChunk} from "./chunkHander";
+
 /* eslint-disable no-undef */
 /* eslint-disable no-unused-vars */
 let PORT = null;
-let versionNo = ensureFourByteString(1);
-let reservedBytes = ensureFourByteString(0);
 const CHUNK_SIZE = 4 * 1000 * 1000; // 4 MB
 const SMALL_CHUNK_SIZE = 500 * 1000; // 500 KB
 
@@ -18,12 +13,12 @@ self.addEventListener("message", (event) => {
     case undefined:
       console.log("port received");
       PORT = data;
+
       break;
     case "deletedb":
       PORT.postMessage("deleteDB|");
       break;
     case "file":
-      // eslint-disable-next-line no-case-declarations
       console.log("filesize", data.file.size);
       processFile(data.file);
       break;
@@ -33,117 +28,193 @@ self.addEventListener("message", (event) => {
 async function processFile(receivedFile) {
   let offset = 0;
   let file = receivedFile;
-  let totalChunks = 0; // Track the total number of chunks to process
-  let currentChunk = 0;
+  let totalChunks = 0;
+  let currentWorker = 0;
+
+  let processingChunks = new Map();
+  let processingWorkers = new Map();
+  let missingPackets = new Set();
+  let isCompleted = false;
   let sendingChunks = 0;
 
-  async function readNextChunk(file) {
-    const slice = file.slice(offset, offset + CHUNK_SIZE);
-    let chunk = await slice.arrayBuffer();
-    currentChunk = currentChunk + 1;
-    if (chunk.byteLength > 0) {
-      const chunkSha256 = await calculateSHA256(chunk); // 64 KB
-      PORT.postMessage(`sha256|${chunkSha256}`);
-      PORT.onmessage = async (event) => {
-        let message = event.data.split("|");
-        let type = message[0];
-        switch (type) {
-          case "confirmation":
-            console.log("confirmation", message[1]);
-            break;
-          case "sha256Exist":
-            console.log("chunkSha256", chunkSha256);
-            if (message[1] == "false") {
-              sendingChunks = sendingChunks + 1;
-              // self.postMessage({ type: "status", status: "StartSending" });
-              PORT.postMessage(`startsending|${chunkSha256}`);
-              console.log("sedingchunks", sendingChunks);
-              // eslint-disable-next-line no-case-declarations
-              // await processChunk(chunk,chunkSha256);
-            }
-            console.log("offset", offset);
-         
-            break;
-          case "isListReady":
-            if (message[1] == "true") {
-              // eslint-disable-next-line no-debugger
-              processChunk(chunk, chunkSha256);
-              self.postMessage({
-                type: "status",
-                status: `sending chunk ${currentChunk}/${Math.ceil(
-                  file.size / CHUNK_SIZE
-                )}`,
-              });
-
-              if (sendingChunks <= 3) {
-                offset += CHUNK_SIZE;
-                if (offset < file.size) {
-                  readNextChunk(file);
-                } else {
-                  console.log("completed 2", file.size, file.name);
-                  PORT.postMessage(`filename|${file.name}`);
-                  // sendingChunks = sendingChunks - 1;
-                  // file = null;
-                  offset = 0;
-                  totalChunks = 0; //
-                }
-              }
-            }
-
-            break;
-
-          case "completesending":
-            sendingChunks = sendingChunks - 1;
-            if (sendingChunks <= 3) {
-              offset += CHUNK_SIZE;
-              if (offset < file.size) {
-                readNextChunk(file);
-              }
-            }
-            break;
-          case "filecompleted":
-            // self.postMessage({ type: "status", status: "File Completed" });
-            break;
-          default:
-            break;
-        }
-      };
+  const readNextChunk = async () => {
+    console.log("sending chunks size", sendingChunks);
+    if (processingWorkers.size >= 3) {
+      console.log("limit reached", processingWorkers.size);
+      return; // Only process up to 3 chunks at a time
     }
-  }
 
-  const processChunk = async (chunk, chunkSha256) => {
-    const base64Chunk = arrayBufferToBase64(chunk); // 4 MB
-    const numSmallChunks = Math.ceil(base64Chunk.length / SMALL_CHUNK_SIZE);
-    const chunkSha256base64 = await calculateBase64SHA256(chunkSha256); // 64 KB
-    totalChunks += numSmallChunks; // Update total chunks count
+    if (offset >= file.size) {
+      // if (processingWorkers.size == 0) {
+        isCompleted = true;
+        console.log("completed processing all chunks");
+        Array.from(processingWorkers.values())[0].postMessage({type: "returnPort"}, [PORT]);
 
-    const processSmallChunk = async (index) => {
-      if (index >= numSmallChunks) {
-        PORT.postMessage(`completesending|`);
-        // Base case: No more chunks to process
-        return;
+        // self.postMessage({ type: "filename", filename: file.name });
+        // PORT.postMessage(`filename|${file.name}`);
+      // }
+      return;
+    }
+    console.log("offset 82", offset);
+
+    const slice = file.slice(offset, offset + CHUNK_SIZE);
+    offset += CHUNK_SIZE;
+
+    // let chunk = await slice.arrayBuffer();
+    const chunkWorker = new Worker(
+      new URL("./chunkWorker.js", import.meta.url),
+      { /* @vite-ignore */ name: `worker-${currentWorker}` }
+    );
+    chunkWorker.postMessage({ type: "chunk", slice }, [PORT]);
+    processingWorkers.set(`worker-${currentWorker}`, chunkWorker);
+    currentWorker += 1;
+
+    console.log("currentWorker map", processingWorkers, currentWorker);
+    // await handleChunk(slice,PORT)
+    // sendingChunks += 1;
+    // await readNextChunk();
+    chunkWorker.onmessage = async (event) => {
+      console.log("chunkWorker onmessage", event);
+      let { type } = event.data;
+      switch (type) {
+        case "returnPort":
+          console.log("get port", event.ports);
+          // PORT = event.ports[0];
+          //       chunkWorker.terminate();
+          break;
+        case "completesending":
+          PORT = event.ports[0];
+          await readNextChunk();
+          break;
+        case "missingPacket":
+          break;
+
+        case "completeChunkPackets":
+          // PORT = event.ports[0];
+          console.log("completeChunkPackets", event.data);
+          let saveWorker = processingWorkers.get(event.data.name);
+          // console.log("save worker", saveWorker);
+         
+          processingWorkers.delete(event.data.name);
+          console.log("currentWorker map before", processingWorkers);
+          // currentWorker -= 1;
+          if (processingWorkers.size == 1) {
+            // Array.from(processingWorkers.values())[0].postMessage({type: "returnPort"}, [PORT]);
+            console.log("currentWorker map after", processingWorkers.size);
+            await readNextChunk();
+            saveWorker.terminate();
+            saveWorker = null;
+          }
+          break;
+        default:
+          break;
       }
-
-      const start = index * SMALL_CHUNK_SIZE;
-      const end = Math.min(start + SMALL_CHUNK_SIZE, base64Chunk.length);
-      const smallChunkBase64 = base64Chunk.slice(start, end);
-
-      // Send the 256 KB chunk as a base64 string and wait for confirmation
-      let packetNo = ensureFourByteString(index + 1);
-      let totalPacketNo = ensureFourByteString(numSmallChunks);
-
-      // POST message to PORT
-      PORT.postMessage(
-        `packet|${versionNo}|${reservedBytes}|${packetNo}|${totalPacketNo}|${chunkSha256base64}|${smallChunkBase64}`
-      );
-
-      // Recursively process the next chunk
-      await processSmallChunk(index + 1);
     };
-
-    // Start the recursion with the first small chunk
-    await processSmallChunk(0);
   };
 
-  readNextChunk(file);
+  await readNextChunk();
+
+  // PORT.onmessage  = async (event) => {
+  //   console.log("called 2", event.data);
+
+  // //  console.log("OnMessage", event);
+  //   let message = event.data.split("|");
+  //   let type = message[0];
+  //   switch (type) {
+  //     case "sha256Exist":
+  //       if (message[2] == "false") {
+  //         sendingChunks += 1;
+  //         // self.postMessage({ type: "startsending", chunkSha256 });
+  //         PORT.postMessage(`startsending|${message[1]}`);
+  //       }
+  //       break;
+  //     case "isListReady":
+  //       console.log(
+  //         "isListReady callad",
+  //         processingChunks.has(message[1]),
+  //       );
+  //       if (message[2] == "true" && processingChunks.has(message[1])) {
+  //         // processingChunks.delete(chunkSha256base64);
+  //           let base64Chunk =  processingChunks.get(message[1]);
+  //         await processChunk(base64Chunk, message[1]);
+
+  //         self.postMessage({
+  //           type: "status",
+  //           status: `sending chunk ${currentChunk}/${Math.ceil(
+  //             file.size / CHUNK_SIZE
+  //           )}`,
+  //         });
+
+  //         if (sendingChunks < 2) {
+  //           await readNextChunk();
+  //         }
+  //       }
+  //       break;
+  // case "completesending":
+  //       console.log("completed sending chunk", processingChunks.size);
+  //       // if (sendingChunks == 0) {
+  //       //   processingChunks.clear()
+  //  await readNextChunk();
+  //       // }
+
+  // break;
+  //     case "missingPacket":
+  //       console.log("missingPacket", message);
+  //       missingPackets.add(event.data);
+  //       break;
+  //     case "completeChunkPackets":
+  //       processingChunks.delete(message[1]);
+  //       console.log("processChunks size", processingChunks.size,missingPackets.size);
+
+  //       if (processingChunks.size == 0 && missingPackets.size == 0) {
+  //         sendingChunks = 0;
+  //         await readNextChunk();
+  //       }
+  //       // if (missingPackets.size > 0) {
+  //       //   missingPackets.forEach(async (chunkMessage) => {
+  //       //     let message = chunkMessage.split("|");
+  //       //     let totalPacketNo = message[1];
+  //       //     let sha256base64 = message[2];
+  //       //     let packetsList = new Set(JSON.parse(message[3]));
+
+  //       //     console.log("missingPacketset", packetsList);
+  //       //     let chunkBase64String = processingChunks.get(sha256base64);
+
+  //       //     function printArrayElements(arr, index = 0) {
+  //       //       // Base case: if the index is equal to the array length, return
+  //       //       if (index === arr.length) {
+  //       //         PORT.postMessage(
+  //       //           `completesending|${sha256base64}|${totalPacketNo}`
+  //       //         );
+  //       //         return;
+  //       //       }
+  //       //       let element = arr[index];
+  //       //       console.log("packet", element);
+
+  //       //       const start = element * SMALL_CHUNK_SIZE;
+  //       //       const end = Math.min(
+  //       //         start + SMALL_CHUNK_SIZE,
+  //       //         chunkBase64String.length
+  //       //       );
+  //       //       let packetBase64 = chunkBase64String.slice(start, end);
+  //       //       console.log(
+  //       //         "chunkbase64 167",
+  //       //         element,
+  //       //         packetBase64.slice(1, 100)
+  //       //       );
+
+  //       //       PORT.postMessage(
+  //       //         `packet|${versionNo}|${reservedBytes}|${element}|${totalPacketNo}|${sha256base64}|${packetBase64}`
+  //       //       );
+  //       //       // Recursive call to the next index
+  //       //       printArrayElements(arr, index + 1);
+  //       //     }
+
+  //       //     printArrayElements([...packetsList]);
+  //       //   });
+  //       // }
+
+  //       break;
+  // }
+  // };
 }

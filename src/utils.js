@@ -2,22 +2,28 @@ export function arrayBufferToBase64(buffer) {
     let binary = "";
     const bytes = new Uint8Array(buffer);
     const len = bytes.byteLength;
+    console.log("binarylength", len);
+
     for (let i = 0; i < len; i++) {
       binary += String.fromCharCode(bytes[i]);
     }
-    return btoa(binary);
+   let bas64 = btoa(binary);
+    console.log("binarybase64", bas64.length)
+
+    return bas64
   }
   // Calculate the SHA-256 hash using Web Crypto API
-  export async function calculateSHA256(uint8Array) {
+  export async function calculateSHA256(buffer) {
+    // const bytes = new Uint8Array(buffer);
     // Calculate SHA-256 hash using Web Crypto API
-    const hashBuffer = await crypto.subtle.digest("SHA-256", uint8Array);
-  
+    const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+    console.log("hashBuffer", hashBuffer.byteLength);
     // Convert hash ArrayBuffer to hexadecimal string
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const hashHex = hashArray
       .map((b) => b.toString(16).padStart(2, "0"))
       .join("");
-  
+      console.log("hashHex", hashHex.length);
     return hashHex;
   }
   
@@ -63,15 +69,17 @@ export function arrayBufferToBase64(buffer) {
     const data = encoder.encode(input);
   
     // Compute SHA-256 hash
-    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    // const hashBuffer = await crypto.subtle.digest("SHA-256", data);
   
     // Convert hash to Base64
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashArray = Array.from((data));
     const hashBinary = hashArray.reduce(
       (data, byte) => data + String.fromCharCode(byte),
       ""
     );
+    // console.log("hashHex", hashBinary.length);
     const hashBase64 = btoa(hashBinary);
+    // console.log("hashBase64", hashBase64.length);
   
     return hashBase64;
   }
