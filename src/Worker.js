@@ -30,6 +30,7 @@ async function processFile(receivedFile) {
   let file = receivedFile;
   let totalChunks = 0;
   let currentWorker = 0;
+  let proccesedWorker = 0;
 
   let processingChunks = new Map();
   let processingWorkers = new Map();
@@ -39,20 +40,46 @@ async function processFile(receivedFile) {
 
   const readNextChunk = async () => {
     console.log("sending chunks size", sendingChunks);
-    if (processingWorkers.size >= 3) {
-      console.log("limit reached", processingWorkers.size);
+
+    if (currentWorker >= 3) {
+      console.log("limit reached", proccesedWorker);
+      // Array.from(processingWorkers.values())[0].postMessage({type: "returnPort"}, [PORT]);
+      let lastworker = Array.from(processingWorkers.values())[0];
+      console.log("lastworker", lastworker);
+      lastworker.postMessage({ type: "postPort" }, [PORT]);
+      // lastworker.terminate();
+      //   // processingWorkers.forEach((worker) => {
+      //   //   worker.terminate();
+      //   //   currentWorker = 0;
+      //   //   processingWorkers.clear();
+      //   // })
       return; // Only process up to 3 chunks at a time
     }
 
+    if(proccesedWorker == 3){
+      console.log("limit reached proccesedWorker", proccesedWorker, processingWorkers);
+      Array.from(processingWorkers.values()).forEach((worker) => {
+        console.log("terminate worker", worker);
+        worker.terminate();
+        proccesedWorker = 0;
+        processingWorkers.clear();
+      });
+      
+    }
     if (offset >= file.size) {
       // if (processingWorkers.size == 0) {
-        isCompleted = true;
-        console.log("completed processing all chunks");
-        Array.from(processingWorkers.values())[0].postMessage({type: "returnPort"}, [PORT]);
+      isCompleted = true;
+      console.log("completed processing all chunks");
+      // Array.from(processingWorkers.values())[0].postMessage({type: "returnPort"}, [PORT]);
 
-        // self.postMessage({ type: "filename", filename: file.name });
-        // PORT.postMessage(`filename|${file.name}`);
-      // }
+      // self.postMessage({ type: "filename", filename: file.name });
+      PORT.postMessage(`filename|${file.name}`);
+      Array.from(processingWorkers.values()).forEach((worker) => {
+        console.log("terminate worker", worker);
+        worker.terminate();
+        proccesedWorker = 0;
+        processingWorkers.clear();
+      });
       return;
     }
     console.log("offset 82", offset);
@@ -77,11 +104,11 @@ async function processFile(receivedFile) {
       console.log("chunkWorker onmessage", event);
       let { type } = event.data;
       switch (type) {
-        case "returnPort":
-          console.log("get port", event.ports);
-          // PORT = event.ports[0];
-          //       chunkWorker.terminate();
-          break;
+        // case "returnPort":
+        //   console.log("get port", event.ports);
+        //   // PORT = event.ports[0];
+        //   //       chunkWorker.terminate();
+        //   break;
         case "completesending":
           PORT = event.ports[0];
           await readNextChunk();
@@ -90,21 +117,37 @@ async function processFile(receivedFile) {
           break;
 
         case "completeChunkPackets":
-          // PORT = event.ports[0];
-          console.log("completeChunkPackets", event.data);
-          let saveWorker = processingWorkers.get(event.data.name);
-          // console.log("save worker", saveWorker);
-         
-          processingWorkers.delete(event.data.name);
-          console.log("currentWorker map before", processingWorkers);
-          // currentWorker -= 1;
-          if (processingWorkers.size == 1) {
-            // Array.from(processingWorkers.values())[0].postMessage({type: "returnPort"}, [PORT]);
-            console.log("currentWorker map after", processingWorkers.size);
-            await readNextChunk();
-            saveWorker.terminate();
-            saveWorker = null;
+          if(event.data.lastChunk){
+            PORT = event.ports[0];
           }
+          // PORT = event.ports[0];
+          // console.log("completeChunkPackets", event.data);
+          // let saveWorker = processingWorkers.get(event.data.name);
+
+          console.log("save worker", event.data.name, proccesedWorker);
+          // processingWorkers.delete(event.data.name);
+          // console.log("currentWorker map before", processingWorkers);
+          // currentWorker -= 1;
+          proccesedWorker += 1;
+          // if (proccesedWorker == 1) {
+          //   // Array.from(processingWorkers.values())[0].postMessage({type: "returnPort"}, [PORT]);
+          //   console.log("currentWorker map before", processingWorkers.size);
+
+          // }
+
+          console.log(
+            "currentWorker map after",
+            processingWorkers.size,
+            proccesedWorker
+          );
+
+          if (proccesedWorker == 3) {
+    
+            currentWorker = 0;
+            await readNextChunk();
+          
+          }
+
           break;
         default:
           break;

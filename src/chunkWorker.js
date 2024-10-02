@@ -5,19 +5,32 @@ import {
   arrayBufferToBase64,
   ensureFourByteString,
 } from "./utils";
-let port = null
+let port = null;
 self.onmessage = async (event) => {
   let { type } = event.data;
   switch (type) {
     case "chunk":
       console.log("chunkWorker", event.data, event.ports, self);
-      port = event.ports[0]
+      port = event.ports[0];
       handleChunk(event.data.slice);
 
       break;
-      case"returnPort":
-        port = event.ports[0]
-      break
+    case "postPort":
+      console.log("get port", event.ports);
+      port = event.ports[0];
+      port.onmessage = (event) => {
+        let message = event.data.split("|");
+        let type = message[0];
+        if(type == "completeChunkPackets"){
+        console.log("message from kotlin", event.data);
+        self.postMessage({ type: "completeChunkPackets", lastChunk: true, name: self.name }, [port]);
+      }
+    }
+      break;
+      case "returnPort":
+
+        self.postMessage({ type: "returnPort" }, [port]);
+        break
 
     default:
       break;
