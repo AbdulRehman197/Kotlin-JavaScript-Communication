@@ -22,6 +22,11 @@ self.addEventListener("message", (event) => {
       console.log("filesize", data.file.size);
       processFile(data.file);
       break;
+    case "sendToKotlin":
+      let { randomString, startIndex, endIndex } = data.data;
+      console.log("randomString", randomString, startIndex, endIndex);
+      PORT.postMessage(`randomString|${randomString}|${startIndex}|${endIndex}`);
+      break;
   }
 });
 
@@ -56,15 +61,18 @@ async function processFile(receivedFile) {
       return; // Only process up to 3 chunks at a time
     }
 
-    if(proccesedWorker == 3){
-      console.log("limit reached proccesedWorker", proccesedWorker, processingWorkers);
+    if (proccesedWorker == 3) {
+      console.log(
+        "limit reached proccesedWorker",
+        proccesedWorker,
+        processingWorkers
+      );
       Array.from(processingWorkers.values()).forEach((worker) => {
         console.log("terminate worker", worker);
         worker.terminate();
         proccesedWorker = 0;
         processingWorkers.clear();
       });
-      
     }
     if (offset >= file.size) {
       // if (processingWorkers.size == 0) {
@@ -117,7 +125,7 @@ async function processFile(receivedFile) {
           break;
 
         case "completeChunkPackets":
-          if(event.data.lastChunk){
+          if (event.data.lastChunk) {
             PORT = event.ports[0];
           }
           // PORT = event.ports[0];
@@ -142,10 +150,8 @@ async function processFile(receivedFile) {
           );
 
           if (proccesedWorker == 3) {
-    
             currentWorker = 0;
             await readNextChunk();
-          
           }
 
           break;

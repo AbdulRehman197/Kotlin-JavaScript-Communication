@@ -14,7 +14,7 @@ function App() {
   const [status, setStatus] = useState("");
   // const [reader, setReader] = useState(null)
   // const [readerStatus, setReaderStatus] = useState("")
-  const worker = new Worker(new URL("./Worker.js", import.meta.url));
+  const worker = new Worker(new URL("./Worker.js", import.meta.url) ,{ type: 'module' });
 
   let handleCallBack = useCallback((event) => {
     var port = event.ports[0];
@@ -54,7 +54,7 @@ function App() {
           break;
         case "sha256":
           console.log("console APP 56", message);
-          console.log("checking sha256",message.chunkSha256);
+          console.log("checking sha256", message.chunkSha256);
           worker.postMessage({ type: "sha256Exist", isExistChunk: false });
           break;
         case "startsending":
@@ -63,10 +63,10 @@ function App() {
         case "packet":
           console.log("packet", message.data.length);
           break;
-          case "completesending":
-            worker.postMessage({ type: "completesending", isCompleted: true });
-            break
-          
+        case "completesending":
+          worker.postMessage({ type: "completesending", isCompleted: true });
+          break;
+
         // case "sha256":
         //   console.log("ChunkResult", message)
         //   if(sha256List.includes(message.sha256)){
@@ -122,24 +122,41 @@ function App() {
     //  base64Chunks.current = (returnChunksOfBase64)
   };
 
+  const handleSendToKotlin = async () => {
+    let str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let startIndex = 0;
+    let randomString = "";
+    for (let i = 0; i <= str.length; i++) {
+      let endIndex = startIndex + 10;
+      randomString = str.slice(startIndex, endIndex);
+      worker.postMessage({
+        type: "sendToKotlin",
+        data: { randomString, startIndex, endIndex },
+      });
+      startIndex = endIndex;
+      i = endIndex;
+      // console.log("randomString", randomString, startIndex, endIndex);
+    }
+  };
   return (
     <>
       <div>
         <h1>{status}</h1>
         {/* <img alt='Demo logo' className='logo' src={data.} /> */}
-        <input type="file" onChange={handleFilePicker} />
+        {/* <input type="file" onChange={handleFilePicker} /> */}
         {/* <button onClick={handleFilePicker}>Pick File</button> */}
         {/* <input type='text' onChange={(e)=>setData(e.target.value)}/> */}
-        <button onClick={handleFetchData}>Fetch data</button>
-        <button onClick={() => worker.postMessage({ type: "deletedb" })}>
+        {/* <button onClick={handleFetchData}>Fetch data</button> */}
+        {/* <button onClick={() => worker.postMessage({ type: "deletedb" })}>
           Delete DB
-        </button>
+        </button> */}
         {/* <p>size:{base64String !== "" ? `${((base64String.length))}` : "data not fetched"}</p>
         <p>{base64Chunks.current !== null ? base64Chunks.current.length : "data not fetched"}</p> */}
-        <p>
+        {/* <p>
           {chunkIndexNo} / {base64Chunks.current.length}
-        </p>
+        </p> */}
         {/* <p>{base64String.slice(3225000,base64String.length)}</p> */}
+        <button onClick={() => handleSendToKotlin()}>Send to kotlin</button>
       </div>
       <PWABadge />
     </>
