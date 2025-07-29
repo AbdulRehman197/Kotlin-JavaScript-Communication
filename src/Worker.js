@@ -3,33 +3,160 @@
 
 /* eslint-disable no-undef */
 /* eslint-disable no-unused-vars */
+import CryptoJS from "crypto-js";
+import { createString } from "./data.js";
 let PORT = null;
-const CHUNK_SIZE = 4 * 1000 * 1000; // 4 MB
+const CHUNK_SIZE = 6 * 1000 * 1000; // 4 MB
 const SMALL_CHUNK_SIZE = 500 * 1000; // 500 KB
+const kPacketNames = new Map();
+let str = [];
+let kNameNo = 1;
+let pNames = [];
+let verid = padOrTrim("0001", 4);
+let reservedBytes = padOrTrim("", 8);
+let stringLength = 500000
 
-self.addEventListener("message", (event) => {
+// let kPacketKey = `k${kNameNo}`;
+self.addEventListener("message", async (event) => {
   let data = event.data;
   switch (data.type) {
     case undefined:
       console.log("port received");
       PORT = data;
-
+      str = await stringList();
+      console.log("str", str.legnth);
+      await handlePortCallbacks();
+      // console.log("kPacketSize in worker", kPacketSize);
+      // self.postMessage({ type: "kPacketSize", kPacketSize });
       break;
     case "deletedb":
       PORT.postMessage("deleteDB|");
       break;
     case "file":
       console.log("filesize", data.file.size);
-      processFile(data.file);
+      processFileV2(data.file);
       break;
     case "sendToKotlin":
-      let { randomString, startIndex, endIndex } = data.data;
-      console.log("randomString", randomString, startIndex, endIndex);
-      PORT.postMessage(`randomString|${randomString}|${startIndex}|${endIndex}`);
+      let hash = await hashStringSHA256(str.join(""));
+      let metadata =
+        verid +
+        padOrTrim("metadata", 32) +
+        padOrTrim(`k${kNameNo}`, 4) +
+        padOrTrim(hash.toString(), 32);
+      PORT.postMessage(metadata);
+
       break;
   }
 });
 
+const handlePortCallbacks = () => {
+  return new Promise((resolve, reject) => {
+    PORT.onmessage = async (event) => {
+      console.log("message from kotlin", event.data);
+      let message = event.data.split("|");
+      let type = message[0];
+      switch (type) {
+        case "pNames":
+          pNames = message[1].split(", ");
+          console.log("pNames", message);
+          console.log("pNames", pNames);
+          for (let i = 0; i < pNames.length; i++) {
+            kPacketNames.set(pNames[i], {
+              isCompleted: false,
+            });
+          }
+          console.log("kPacketNames", kPacketNames);
+          break;
+        case "metaRecevied":
+          console.log("metaRecevied", `k${kNameNo}`);
+          // let metadataReceived =
+          //   verid + padOrTrim("metaRecevied", 32) + padOrTrim(`k${kNameNo}`, 4);
+          // PORT.postMessage(metadataReceived);
+          let startIndex = 0;
+
+          let i = 0;
+          await handleSendingChunks(startIndex, i, str);
+          // for (let i = 0; i < str.length; i++) {
+          //   randomString = str[i];
+          //   console.log("randomString", randomString.length);
+          //   let finalString =
+          //     verid +
+          //     padOrTrim("randomString", 32) +
+          //     padOrTrim(`k${kNameNo}`, 4) +
+          //     padOrTrim(i + 1, 4) +
+          //     padOrTrim(startIndex, 12) +
+          //     reservedBytes +
+          //     randomString;
+          //   PORT.postMessage(
+          //     finalString
+          //     // `randomString|${kPacketKey}|${randomString}|${startIndex}|${i+1}`
+          //     //version,verid  4 bytes // 32 bytes id // bucket 4 bytes
+          //     // offset 4 bytes // chunk no 4 bytes // 16 bytes reserved // finalMessage 500kb
+          //   );
+          //   startIndex = startIndex + 500000;
+
+          //   // console.log("randomString", randomString);
+          // }
+
+          // kPacketNames.set(`k${kNameNo}`, {
+          //   isCompleted: true,
+          // });
+          // let packetCompleted =
+          //   verid +
+          //   padOrTrim("packetCompleted", 32) +
+          //   padOrTrim(`k${kNameNo}`, 4);
+          // PORT.postMessage(packetCompleted);
+          break;
+
+        case "packetCompleted":
+          console.log("packetCompleted", pNames.length, kNameNo);
+
+          if (kNameNo == pNames.length) return;
+          self.postMessage({ type: "packetCompleted" });
+          // PORT.postMessage(`checkingSHA|`);
+          kNameNo++;
+          break;
+        case "completeSHA":
+          console.log("completeSHA");
+          break;
+      }
+
+      resolve();
+    };
+  });
+};
+const handleSendingChunks = async (startIndex, i, str) => {
+  console.log("indexes", i, str.length);
+  if (i == str.length) {
+    kPacketNames.set(`k${kNameNo}`, {
+      isCompleted: true,
+    });
+    let packetCompleted =
+      verid + padOrTrim("packetCompleted", 32) + padOrTrim(`k${kNameNo}`, 4);
+    PORT.postMessage(packetCompleted);
+    return;
+  }
+  let randomString = str[i];
+  console.log("randomString", randomString.length);
+  let finalString =
+    verid +
+    padOrTrim("randomString", 32) +
+    padOrTrim(`k${kNameNo}`, 4) +
+    padOrTrim(i + 1, 4) +
+    padOrTrim(startIndex, 12) +
+    reservedBytes +
+    randomString;
+  PORT.postMessage(
+    finalString
+    // `randomString|${kPacketKey}|${randomString}|${startIndex}|${i+1}`
+    //version,verid  4 bytes // 32 bytes id // bucket 4 bytes
+    // offset 8 bytes // chunk no 4 bytes // 16 bytes reserved // finalMessage 500kb
+  );
+  startIndex = startIndex + stringLength;
+  setTimeout(() => {
+    handleSendingChunks(startIndex, i + 1, str);
+  }, 50);
+};
 async function processFile(receivedFile) {
   let offset = 0;
   let file = receivedFile;
@@ -266,4 +393,54 @@ async function processFile(receivedFile) {
   //       break;
   // }
   // };
+}
+
+async function processFileV2(file) {
+let fileOffset = 0;
+let fileChunk  = file.slice(fileOffset, fileOffset + CHUNK_SIZE);
+
+
+
+
+  
+  console.log("filebase64sha", shaFrombase64);
+}
+function padOrTrim(str, length) {
+  return (str + " ".repeat(length)).slice(0, length);
+}
+async function hashStringSHA256(message) {
+  return CryptoJS.SHA256(message).toString(CryptoJS.enc.Hex);
+
+}
+async function hashStringMD5(message) {
+  return CryptoJS.MD5(message);
+}
+
+const stringList = async () => {
+  return [
+    "a".repeat(stringLength), // 500 kb // 1
+    "b".repeat(stringLength), // 500 kb // 2
+    "c".repeat(stringLength), // 500 kb // 3
+    "d".repeat(stringLength), // 500 kb // 4
+    "e".repeat(stringLength), // 500 kb // 5
+    "f".repeat(stringLength), // 500 kb // 6
+    "g".repeat(stringLength), // 500 kb // 7
+    "h".repeat(stringLength), // 500 kb // 8
+    "i".repeat(stringLength), // 500 kb // 9
+    "j".repeat(stringLength), // 500 kb // 10
+    "k".repeat(stringLength), // 500 kb // 11
+    "l".repeat(stringLength), // 500 kb // 12
+  ];
+};
+
+const handleSendingBase64 = (base64Chunk) => {
+  let chunks = Math.ceil(base64Chunk.length / CHUNK_SIZE);
+  let startIndex = 0;
+  for (let i = 0; i < chunks; i++) {
+    let endIndex = Math.min(startIndex + CHUNK_SIZE, base64Chunk.length);
+    let chunkBase64 = base64Chunk.slice(startIndex, endIndex);
+    let chunkSha256base64 = calculateBase64SHA256(chunkBase64);
+    port.postMessage([chunkBase64, chunkSha256base64, i, chunks]);
+    startIndex = endIndex;
+  }
 }

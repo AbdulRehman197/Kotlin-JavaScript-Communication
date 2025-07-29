@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 // import appLogo from '/favicon.svg'
 import PWABadge from "./PWABadge.jsx";
 import "./App.css";
-
+import {createString} from "./data.js"
 function App() {
   const [portObj, setPortObj] = useState({});
   const base64Chunks = useRef([]);
@@ -12,12 +12,18 @@ function App() {
   const fileRef = useRef(null);
   const [sha256List, SetSha256List] = useState([]);
   const [status, setStatus] = useState("");
+  const [kPacketSize, setKPacketSize] = useState(0);
+
   // const [reader, setReader] = useState(null)
   // const [readerStatus, setReaderStatus] = useState("")
-  const worker = new Worker(new URL("./Worker.js", import.meta.url) ,{ type: 'module' });
+  const worker = new Worker(new URL("./Worker.js", import.meta.url), {
+    type: "module",
+  });
 
   let handleCallBack = useCallback((event) => {
     var port = event.ports[0];
+    // console.log("event", event);
+
     if (typeof port !== "undefined") {
       worker.postMessage(port, [port]);
       // alert(port)
@@ -44,6 +50,7 @@ function App() {
   }, []);
 
   useEffect(() => {
+
     // worker.postMessage({type: 'port', port: portObj})
     worker.onmessage = (event) => {
       const message = event.data;
@@ -65,6 +72,14 @@ function App() {
           break;
         case "completesending":
           worker.postMessage({ type: "completesending", isCompleted: true });
+          break;
+
+        case "kPacketSize":
+          console.log("kPacketSize", message.kPacketSize);
+          setKPacketSize(message.kPacketSize);
+          break;
+        case "packetCompleted":
+          worker.postMessage({ type: "sendToKotlin", });
           break;
 
         // case "sha256":
@@ -98,6 +113,7 @@ function App() {
     // setData(null)
     const file = e.target.files[0];
     fileRef.current = file;
+
     // let fileBuffer  =  await file.arrayBuffer()
     // let fileBufferUnitArray  =  new Uint8Array(fileBuffer)
     // console.log("byteArray",fileBuffer)
@@ -123,30 +139,17 @@ function App() {
   };
 
   const handleSendToKotlin = async () => {
-    let str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    let startIndex = 0;
-    let randomString = "";
-    for (let i = 0; i <= str.length; i++) {
-      let endIndex = startIndex + 10;
-      randomString = str.slice(startIndex, endIndex);
-      worker.postMessage({
-        type: "sendToKotlin",
-        data: { randomString, startIndex, endIndex },
-      });
-      startIndex = endIndex;
-      i = endIndex;
-      // console.log("randomString", randomString, startIndex, endIndex);
-    }
+       worker.postMessage({ type: "sendToKotlin" });
   };
   return (
     <>
       <div>
         <h1>{status}</h1>
         {/* <img alt='Demo logo' className='logo' src={data.} /> */}
-        {/* <input type="file" onChange={handleFilePicker} /> */}
-        {/* <button onClick={handleFilePicker}>Pick File</button> */}
+        <input type="file" onChange={handleFilePicker} />
+        {/* <button onClick={handleFilePicker}>pick File</button> */}
         {/* <input type='text' onChange={(e)=>setData(e.target.value)}/> */}
-        {/* <button onClick={handleFetchData}>Fetch data</button> */}
+        <button onClick={handleFetchData}>send file</button>
         {/* <button onClick={() => worker.postMessage({ type: "deletedb" })}>
           Delete DB
         </button> */}
@@ -156,7 +159,7 @@ function App() {
           {chunkIndexNo} / {base64Chunks.current.length}
         </p> */}
         {/* <p>{base64String.slice(3225000,base64String.length)}</p> */}
-        <button onClick={() => handleSendToKotlin()}>Send to kotlin</button>
+        {/* <button onClick={() => handleSendToKotlin()}>Send to kotlin</button> */}
       </div>
       <PWABadge />
     </>
