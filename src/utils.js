@@ -2,13 +2,13 @@ export function arrayBufferToBase64(buffer) {
     let binary = "";
     const bytes = new Uint8Array(buffer);
     const len = bytes.byteLength;
-    console.log("binarylength", len);
+    // console.log("binarylength", len);
 
     for (let i = 0; i < len; i++) {
       binary += String.fromCharCode(bytes[i]);
     }
    let bas64 = btoa(binary);
-    console.log("binarybase64", bas64.length)
+    // console.log("binarybase64", bas64.length)
 
     return bas64
   }

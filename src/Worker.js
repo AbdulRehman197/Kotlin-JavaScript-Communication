@@ -5,6 +5,7 @@
 /* eslint-disable no-unused-vars */
 import CryptoJS from "crypto-js";
 import { createString } from "./data.js";
+import {arrayBufferToBase64} from "./utils.js"
 let PORT = null;
 const CHUNK_SIZE = 6 * 1000 * 1000; // 4 MB
 const SMALL_CHUNK_SIZE = 500 * 1000; // 500 KB
@@ -15,7 +16,8 @@ let pNames = [];
 let verid = padOrTrim("0001", 4);
 let reservedBytes = padOrTrim("", 8);
 let stringLength = 500000
-
+let fileOffset = 0;
+let fileSmallOffset = 0
 // let kPacketKey = `k${kNameNo}`;
 self.addEventListener("message", async (event) => {
   let data = event.data;
@@ -33,7 +35,7 @@ self.addEventListener("message", async (event) => {
       PORT.postMessage("deleteDB|");
       break;
     case "file":
-      console.log("filesize", data.file.size);
+      console.log("filesize", data.file.size /1024/1024);
       processFileV2(data.file);
       break;
     case "sendToKotlin":
@@ -396,15 +398,37 @@ async function processFile(receivedFile) {
 }
 
 async function processFileV2(file) {
-let fileOffset = 0;
+  let base64Array = []
+  let startIndex = 0;
+  let i = 0;
+if (fileOffset >= file.size) return
 let fileChunk  = file.slice(fileOffset, fileOffset + CHUNK_SIZE);
 
-
-
-
+fileOffset += CHUNK_SIZE
+ let basearray = await processSmallChunk(fileChunk,base64Array)
+// await handleSendingChunks(startIndex, i, str);
+// console.log("chunk 64 array", basearray)
+console.log("file offet and file lenght", (fileOffset/1024/1024), (file.size/1024/1024), fileChunk.size/1024/1024)
+return await processFileV2(file)
   
-  console.log("filebase64sha", shaFrombase64);
 }
+
+async function processSmallChunk(smallFileChunk,base64Array) {
+
+if(fileSmallOffset >= smallFileChunk.size) {
+   return base64Array
+  }
+  let small500kbchunk = smallFileChunk.slice(fileSmallOffset,  fileSmallOffset + SMALL_CHUNK_SIZE) 
+  fileSmallOffset += SMALL_CHUNK_SIZE
+  let chunkBasw64 = arrayBufferToBase64(await small500kbchunk.arrayBuffer())
+  base64Array.push(chunkBasw64)
+  console.log("chunkBasw64",smallFileChunk.size)
+ return await processSmallChunk(smallFileChunk,base64Array)
+  }
+  
+
+
+
 function padOrTrim(str, length) {
   return (str + " ".repeat(length)).slice(0, length);
 }
