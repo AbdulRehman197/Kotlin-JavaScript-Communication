@@ -1,165 +1,130 @@
-import { useEffect, useState, useCallback, useRef } from "react";
-
-// import appLogo from '/favicon.svg'
+import { useEffect, useState, useRef, useCallback } from "react";
 import PWABadge from "./PWABadge.jsx";
 import "./App.css";
-import {createString} from "./data.js"
+
 function App() {
-  const [portObj, setPortObj] = useState({});
-  const base64Chunks = useRef([]);
-  const [base64String, setBase64String] = useState("");
-  const [chunkIndexNo, setChunkIndexNo] = useState(0);
+  const workerRef = useRef(null);
   const fileRef = useRef(null);
-  const [sha256List, SetSha256List] = useState([]);
+
   const [status, setStatus] = useState("");
+  const [file, setFile] = useState({});
   const [kPacketSize, setKPacketSize] = useState(0);
 
-  // const [reader, setReader] = useState(null)
-  // const [readerStatus, setReaderStatus] = useState("")
-  const worker = new Worker(new URL("./Worker.js", import.meta.url), {
-    type: "module",
-  });
-
-  let handleCallBack = useCallback((event) => {
-    var port = event.ports[0];
-    // console.log("event", event);
-
-    if (typeof port !== "undefined") {
-      worker.postMessage(port, [port]);
-      // alert(port)
-
-      // alert(port)
-      // let chunkIndex = 0;
-      // Receive upcoming messages on this port.
-      //   // alert(e.data)
-      //   // alert(base64Chunks.current.length)
-      //   if (e.data === 'confirm') {
-      //     if (chunkIndex < base64Chunks.current.length) {
-      //       // alert(typeof base64Chunks.current[chunkIndex])
-      //       port.postMessage(base64Chunks.current[chunkIndex]);
-      //       chunkIndex++;
-      //       setChunkIndexNo(chunkIndex)
-      //     } else {
-      //       port.postMessage(fileRef.current.name);
-      //       // alert('All chunks sent successfully');
-
-      //       // self.close();
-      //     }
-      //   }
-    }
-  }, []);
-
+  // Create worker once on mount
   useEffect(() => {
+    workerRef.current = new Worker(
+      new URL("./HttpWorker.js", import.meta.url),
+      {
+        type: "module",
+      }
+    );
 
-    // worker.postMessage({type: 'port', port: portObj})
+    const worker = workerRef.current;
+
     worker.onmessage = (event) => {
       const message = event.data;
-      console.log("message", message);
-      switch (event.data.type) {
+      console.log("Worker message:", message);
+
+      switch (message.type) {
         case "status":
-          setStatus(event.data.status);
+          setStatus(message.status);
+          setFile(message.file);
           break;
         case "sha256":
-          console.log("console APP 56", message);
-          console.log("checking sha256", message.chunkSha256);
+          console.log("SHA256 chunk:", message.chunkSha256);
           worker.postMessage({ type: "sha256Exist", isExistChunk: false });
           break;
         case "startsending":
           worker.postMessage({ type: "isListReady", isListReady: true });
           break;
         case "packet":
-          console.log("packet", message.data.length);
+          console.log("Packet length:", message.data.length);
           break;
         case "completesending":
           worker.postMessage({ type: "completesending", isCompleted: true });
           break;
-
         case "kPacketSize":
-          console.log("kPacketSize", message.kPacketSize);
+          console.log("kPacketSize:", message.kPacketSize);
           setKPacketSize(message.kPacketSize);
           break;
         case "packetCompleted":
-          worker.postMessage({ type: "sendToKotlin", });
+          worker.postMessage({ type: "sendToKotlin" });
           break;
-
-        // case "sha256":
-        //   console.log("ChunkResult", message)
-        //   if(sha256List.includes(message.sha256)){
-        //     worker.postMessage({type: "sha256", isExistChunk: true})
-        //   }else{
-        //     sha256List.push(message.sha256)
-        //     worker.postMessage({type: "sha256", isExistChunk: false})
-        //   }
-        //   break;
-
         default:
           break;
       }
     };
-    window.addEventListener("message", handleCallBack);
-    // setReader(new FileReader())
+
+    // Cleanup worker on unmount
     return () => {
-      window.removeEventListener("message", handleCallBack);
+      worker.terminate();
+      workerRef.current = null;
     };
+  }, []);
+
+  // Handle incoming MessageChannel port (if needed)
+  const handleCallBack = useCallback((event) => {
+    const port = event.ports?.[0];
+    if (port && workerRef.current) {
+      workerRef.current.postMessage(port, [port]);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("message", handleCallBack);
+    return () => window.removeEventListener("message", handleCallBack);
   }, [handleCallBack]);
 
-  const handleFetchData = async () => {
-    worker.postMessage({ type: "file", file: fileRef.current });
-
-    // alert(data.length + " " + portObj)
-  };
-  const handleFilePicker = async (e) => {
-    console.log("done doone");
-    // setData(null)
-    const file = e.target.files[0];
-    fileRef.current = file;
-
-    // let fileBuffer  =  await file.arrayBuffer()
-    // let fileBufferUnitArray  =  new Uint8Array(fileBuffer)
-    // console.log("byteArray",fileBuffer)
-    // console.log("byteArrayUint8Array",fileBufferUnitArray)
-    // let filesha = await calculateSHA256(fileBuffer)
-    //   let filebase64 =   arrayBufferToBase64(fileBuffer)
-    //   console.log("filebase64", filebase64)
-    //     fileRef.current = file
-    //       console.log("filesha", filesha)
-    //  let shaFrombase64 = await calculateSHA256FromBase64(filebase64)
-    //    console.log("filebase64sha", shaFrombase64)
-
-    // fileRef.current = file
-    //   let buffer =  await file.arrayBuffer();
-    //   // alert(buffer.byteLength)
-    // let base64 =  btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
-
-    //   console.log("file",base64)
-    //   setBase64String(base64)
-    //  let returnChunksOfBase64 = await splitBase64(base64, 500)
-    // //  alert(returnChunksOfBase64.length)
-    //  base64Chunks.current = (returnChunksOfBase64)
+  // Send selected file to worker
+  const handleFetchData = () => {
+    if (fileRef.current && workerRef.current) {
+      workerRef.current.postMessage({ type: "file", file: fileRef.current });
+    }
   };
 
-  const handleSendToKotlin = async () => {
-       worker.postMessage({ type: "sendToKotlin" });
+  // Handle file selection
+  const handleFilePicker = (e) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      fileRef.current = selectedFile;
+      setStatus("");
+      setFile({});
+    }
   };
+
   return (
     <>
       <div>
-        <h1>{status}</h1>
-        {/* <img alt='Demo logo' className='logo' src={data.} /> */}
         <input type="file" onChange={handleFilePicker} />
-        {/* <button onClick={handleFilePicker}>pick File</button> */}
-        {/* <input type='text' onChange={(e)=>setData(e.target.value)}/> */}
-        <button onClick={handleFetchData}>send file</button>
-        {/* <button onClick={() => worker.postMessage({ type: "deletedb" })}>
-          Delete DB
-        </button> */}
-        {/* <p>size:{base64String !== "" ? `${((base64String.length))}` : "data not fetched"}</p>
-        <p>{base64Chunks.current !== null ? base64Chunks.current.length : "data not fetched"}</p> */}
-        {/* <p>
-          {chunkIndexNo} / {base64Chunks.current.length}
-        </p> */}
-        {/* <p>{base64String.slice(3225000,base64String.length)}</p> */}
-        {/* <button onClick={() => handleSendToKotlin()}>Send to kotlin</button> */}
+        <button onClick={handleFetchData} disabled={!fileRef.current}>
+          Send file
+        </button>
+        <button
+          onClick={async () => {
+            const response = await fetch("http://127.0.0.1:8080/");
+            console.log("res", response);
+          }}
+        >
+          Check
+        </button>
+        <p>{status}</p>
+        {file?.isCompleted && (
+          <a
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              workerRef.current.postMessage({
+                type: "getFile",
+                name: file.name,
+              });
+              setTimeout(() => {
+                window.close();
+              }, 100);
+            }}
+          >
+            {file.name}
+          </a>
+        )}
       </div>
       <PWABadge />
     </>

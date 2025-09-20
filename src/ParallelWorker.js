@@ -13,11 +13,10 @@ let reservedBytes = padOrTrim("", 8);
 
 let currentFile = null;
 let fileOffset = 0;
-let fileSmallOffset = 0;
 
 let currentPacketSha = "";
 let kPacketNames = new Map();
-let fileChunk;
+
 console.log("worker initialized");
 
 self.addEventListener("message", async (event) => {
@@ -51,20 +50,9 @@ self.addEventListener("message", async (event) => {
         padOrTrim(hash.toString(), 32);
       PORT.postMessage(metadata);
       break;
+
     case "getFile":
       handleGetFile(event.data.name);
-      break;
-
-    case "sendByteArray":
-      const arr = new Uint8Array(255);
-      for (let i = 0; i < 255; i++) {
-        arr[i] = i;
-      }
-      console.log("byteArray", arr)
-    //  let base64 =  arrayBufferToBase64(arr.buffer)
-    //  console.log("base64", base64)
-      PORT.postMessage(arr)
-
       break;
 
     default:
@@ -74,11 +62,9 @@ self.addEventListener("message", async (event) => {
 
 function resetFileState() {
   fileOffset = 0;
-  fileSmallOffset = 0;
   currentPacketSha = "";
   kPacketNames.clear();
   currentFile = null;
-  // Add any other parameters you want to reset here
 }
 
 async function handlePortCallbacks() {
@@ -95,12 +81,11 @@ async function handlePortCallbacks() {
               currentFile.size / CHUNK_SIZE
             )} is sending`,
           });
-          await processSmallChunk(fileChunk, 1);
+          await processSmallChunksParallel();
           break;
 
         case "packetCompleted":
           await processFileV2(currentFile);
-
           break;
 
         case "completeSHA":
@@ -129,93 +114,101 @@ async function processFileV2(file) {
     return;
   }
 
-  fileChunk = file.slice(fileOffset, fileOffset + CHUNK_SIZE);
+  const blobChunk = file.slice(fileOffset, fileOffset + CHUNK_SIZE);
   fileOffset += CHUNK_SIZE;
 
   console.log("Processing chunk no:", fileOffset / CHUNK_SIZE);
-  await sendMetadata(fileChunk, fileOffset / CHUNK_SIZE);
-}
 
-async function processSmallChunk(chunk, i) {
-  if (fileSmallOffset >= chunk.size) {
-    kPacketNames.set(currentPacketSha, { isCompleted: true });
+  const arrayBuffer = await blobChunk.arrayBuffer();
 
-    const packetCompleted =
-      verid +
-      padOrTrim("packetCompleted", 32) +
-      padOrTrim(currentPacketSha, 64);
-
-    PORT.postMessage(packetCompleted);
-
-    fileChunk = null;
-    currentPacketSha = "";
-    fileSmallOffset = 0;
-    return;
-  }
-
-  const smallChunk = chunk.slice(
-    fileSmallOffset,
-    fileSmallOffset + SMALL_CHUNK_SIZE
-  );
-  // const chunkBase64 = arrayBufferToBase64(await smallChunk.arrayBuffer());
-  const reader = new FileReader();
-  reader.onload = async () => {
-    let chunkBase64 = reader.result;
-    // if(chunkBase64 % 3 == 1) {
-    //   chunkBase64 + "=="
-    // }
-    // if(chunkBase64 % 3 == 2){
-    //    chunkBase64 + "="
-    // }
-    console.log("file loaded", chunkBase64);
-    const finalString =
-      verid +
-      padOrTrim("onlyText", 32) +
-      padOrTrim(currentFile.name, 500) +
-      padOrTrim(currentPacketSha, 64) +
-      padOrTrim(i, 4) +
-      padOrTrim(fileSmallOffset, 12) +
-      reservedBytes +
-      chunkBase64;
-
-    PORT.postMessage(finalString);
-    fileSmallOffset += SMALL_CHUNK_SIZE;
-
-    await processSmallChunk(chunk, i + 1);
-  };
-  reader.readAsText(smallChunk);
-
-  // const finalString =
-  //   verid +
-  //   padOrTrim("randomString", 32) +
-  //   padOrTrim(currentPacketSha, 64) +
-  //   padOrTrim(i, 4) +
-  //   padOrTrim(fileSmallOffset, 12) +
-  //   reservedBytes +
-  //   chunkBase64;
-
-  // PORT.postMessage(finalString);
-  // PORT.postMessage((new Uint8Array(await smallChunk.arrayBuffer())).toString())
-
-  // fileSmallOffset += SMALL_CHUNK_SIZE;
-
-  // await processSmallChunk(chunk, i + 1);
-}
-
-async function sendMetadata(chunk, chunkNo) {
-  const shaHash = await getBlobSHA256(chunk);
-  console.log("Computed SHA256:", shaHash);
+  const shaHash = await getArrayBufferSHA256(arrayBuffer);
+  currentPacketSha = shaHash;
+  kPacketNames.set(shaHash, { isCompleted: false });
 
   const metadata =
     verid +
     padOrTrim("metadata", 32) +
     padOrTrim(shaHash, 64) +
-    padOrTrim(chunk.size, 8) +
+    padOrTrim(arrayBuffer.byteLength, 8) +
     padOrTrim(currentFile.name, 500) +
-    padOrTrim(chunkNo, 8);
+    padOrTrim(fileOffset / CHUNK_SIZE, 8);
   PORT.postMessage(metadata);
-  kPacketNames.set(shaHash, { isCompleted: false });
-  currentPacketSha = shaHash;
+}
+
+async function processSmallChunksParallel() {
+  const chunkBuffer = await currentFile
+    .slice(fileOffset - CHUNK_SIZE, fileOffset)
+    .arrayBuffer();
+
+  const numChunks = Math.ceil(chunkBuffer.byteLength / SMALL_CHUNK_SIZE);
+  const promises = [];
+
+  for (let i = 0; i < numChunks; i++) {
+    const offset = i * SMALL_CHUNK_SIZE;
+    const slice = chunkBuffer.slice(offset, offset + SMALL_CHUNK_SIZE);
+    promises.push(runBase64Worker(slice, i, offset));
+  }
+
+  await Promise.all(promises);
+
+  // Notify Kotlin after all slices are done
+  const packetCompleted =
+    verid +
+    padOrTrim("packetCompleted", 32) +
+    padOrTrim(currentPacketSha, 64);
+  PORT.postMessage(packetCompleted);
+}
+
+function runBase64Worker(sliceBuffer, index, offset) {
+  return new Promise((resolve, reject) => {
+    const workerBlob = new Blob(
+      [
+        `
+      self.onmessage = async function(e) {
+        const { buffer } = e.data;
+        const base64 = btoa(
+          new Uint8Array(buffer)
+            .reduce((data, byte) => data + String.fromCharCode(byte), "")
+        );
+        self.postMessage({ base64 });
+      };
+      `,
+      ],
+      { type: "application/javascript" }
+    );
+
+    const blobURL = URL.createObjectURL(workerBlob);
+    const worker = new Worker(blobURL);
+    URL.revokeObjectURL(blobURL);
+
+    worker.onmessage = (e) => {
+      const base64 = e.data.base64;
+        console.log("base64", base64)
+      const finalString =
+        verid +
+        padOrTrim("randomString", 32) +
+        padOrTrim(currentPacketSha, 64) +
+        padOrTrim(index, 4) +
+        padOrTrim(offset, 12) +
+        reservedBytes +
+        base64;
+
+      PORT.postMessage(finalString);
+      worker.terminate();
+      resolve();
+    };
+
+    worker.onerror = (err) => {
+      console.error("Worker error", err);
+      reject(err);
+    };
+
+    worker.postMessage({ buffer: sliceBuffer }, [sliceBuffer]); // Transfer buffer for performance
+  });
+}
+
+function padOrTrim(str, length) {
+  return (str + " ".repeat(length)).slice(0, length);
 }
 
 const handleGetFile = (fileName) => {
@@ -223,16 +216,12 @@ const handleGetFile = (fileName) => {
     verid + padOrTrim("readFileChunk", 32) + padOrTrim(fileName, 500);
   PORT.postMessage(fileMetadData);
 };
-async function getBlobSHA256(blob) {
-  const arrayBuffer = await blob.arrayBuffer();
+
+async function getArrayBufferSHA256(arrayBuffer) {
   const hashBuffer = await crypto.subtle.digest("SHA-256", arrayBuffer);
   return Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-}
-
-function padOrTrim(str, length) {
-  return (str + " ".repeat(length)).slice(0, length);
 }
 
 async function hashStringSHA256(message) {

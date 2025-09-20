@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>File Read and Padding Checker</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    textarea {
+      width: 100%;
+      height: 200px;
+      margin-top: 10px;
+      font-family: monospace;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    label {
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+  <label for="fileInput">Select a file:</label>
+  <input type="file" id="fileInput" />
+
+  <h3>Output (binary string + padding):</h3>
+  <textarea id="output" readonly></textarea>
+
+  <script>
+    function readFileAndAddPadding(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+
+        // Read as binary string
+        reader.readAsText(file);
+
+        reader.onload = () => {
+          let binaryStr = reader.result;
+          const len = binaryStr.length;
+          const remainder = len % 3;
+
+          let result = binaryStr;
+
+          if (remainder === 1) {
+            result += '==';
+          } else if (remainder === 2) {
+            result += '=';
+          }
+
+          resolve(result);
+        };
+
+        reader.onerror = () => {
+          reject(reader.error);
+        };
+      });
+    }
+
+    const fileInput = document.getElementById('fileInput');
+    const output = document.getElementById('output');
+
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      readFileAndAddPadding(file)
+        .then(result => {
+          // Show the result in textarea
+          // Replace non-printable characters with '.' for visibility
+          const display = result.replace(/[\x00-\x1F\x7F-\x9F]/g, '.');
+          output.value = display;
+          console.log("Result length:", result.length);
+          console.log("Remainder:", result.length % 3);
+        })
+        .catch(err => {
+          output.value = 'Error reading file: ' + err;
+        });
+    });
+  </script>
+
+</body>
+</html>
